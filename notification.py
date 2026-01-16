@@ -133,7 +133,12 @@ class NotificationService:
         
         # 自定义 Webhook 配置
         self._custom_webhook_urls = getattr(config, 'custom_webhook_urls', []) or []
-        
+
+       # 自定义Webhook扩展参数（适配新规范）
+        self._custom_webhook_tags = getattr(config, 'custom_webhook_tags', 'A股分析|智能报告') or ''
+        self._custom_webhook_short = getattr(config, 'custom_webhook_short', 'A股自选股智能分析报告，含操作建议与行情分析') or ''
+   
+       
         # 消息长度限制（字节）
         self._feishu_max_bytes = getattr(config, 'feishu_max_bytes', 20000)
         self._wechat_max_bytes = getattr(config, 'wechat_max_bytes', 4000)
@@ -1761,6 +1766,7 @@ class NotificationService:
         Returns:
             是否至少有一个 Webhook 发送成功
         """
+        import time  # 新增这行
         if not self._custom_webhook_urls:
             logger.warning("未配置自定义 Webhook，跳过推送")
             return False
@@ -1785,12 +1791,53 @@ class NotificationService:
                 body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
                 headers_with_charset = dict(headers)
                 headers_with_charset['Content-Type'] = 'application/json; charset=utf-8'
-                response = requests.post(
-                    url,
-                    data=body,
-                    headers=headers_with_charset,
-                    timeout=30
-                )
+                try:
+                    response = requests.post(
+                        url,
+                        data=body,
+                        headers=headers_with_charset,
+                        timeout=30
+                    )
+                    # 新增：打印详细响应日志（便于排查500错误）
+                    logger.debug(f"自定义Webhook {i+1} 响应状态码: {response.status_code}")
+                    logger.debug(f"自定义Webhook {i+1} 响应内容: {response.text[:500]}")
+    
+                    if response.status_code == 200:
+                        logger.info(f"自定义 Webhook {i+1} 推送成功")
+                        success_count += 1
+                    else:
+                        logger.error(f"自定义 Webhook {i+1} 推送失败: HTTP {response.status_code}")
+                        logger.error(f"响应内容: {response.text[:500]}")
+                        # 新增：500错误重试1次
+                        if response.status_code == 500:
+                            logger.info(f"自定义Webhook {i+1} 触发500错误，重试1次...")
+                            time.sleep(1)
+                            response = requests.post(
+                                url,
+                                data=body,
+                                headers=headers_with_charset,
+                                timeout=30
+                            )
+                            if response.status_code == 200:
+                                logger.info(f"自定义Webhook {i+1} 重试成功")
+                                success_count += 1
+                except Exception as e:
+                    logger.error(f"自定义 Webhook {i+1} 推送异常: {e}")
+                    # 新增：异常时重试1次
+                    try:
+                        logger.info(f"自定义Webhook {i+1} 推送异常，重试1次...")
+                        time.sleep(1)
+                        response = requests.post(
+                            url,
+                            data=body,
+                            headers=headers_with_charset,
+                            timeout=30
+                        )
+                        if response.status_code == 200:
+                            logger.info(f"自定义Webhook {i+1} 重试成功")
+                            success_count += 1
+                    except Exception as retry_e:
+                        logger.error(f"自定义Webhook {i+1} 重试失败: {retry_e}")
                 
                 if response.status_code == 200:
                     logger.info(f"自定义 Webhook {i+1} 推送成功")
@@ -1805,54 +1852,67 @@ class NotificationService:
         logger.info(f"自定义 Webhook 推送完成：成功 {success_count}/{len(self._custom_webhook_urls)}")
         return success_count > 0
     
-    def _build_custom_webhook_payload(self, url: str, content: str) -> dict:
-        """
-        根据 URL 构建对应的 Webhook payload
-        
-        自动识别常见服务并使用对应格式
-        """
-        url_lower = url.lower()
-        
-        # 钉钉机器人
-        if 'dingtalk' in url_lower or 'oapi.dingtalk.com' in url_lower:
-            return {
-                "msgtype": "markdown",
-                "markdown": {
-                    "title": "股票分析报告",
-                    "text": content
-                }
-            }
-        
-        # Discord Webhook
-        if 'discord.com/api/webhooks' in url_lower or 'discordapp.com/api/webhooks' in url_lower:
-            # Discord 限制 2000 字符
-            truncated = content[:1900] + "..." if len(content) > 1900 else content
-            return {
-                "content": truncated
-            }
-        
-        # Slack Incoming Webhook
-        if 'hooks.slack.com' in url_lower:
-            return {
-                "text": content,
-                "mrkdwn": True
-            }
-        
-        # Bark (iOS 推送)
-        if 'api.day.app' in url_lower:
-            return {
-                "title": "股票分析报告",
-                "body": content[:4000],  # Bark 限制
-                "group": "stock"
-            }
-        
-        # 通用格式（兼容大多数服务）
+def _build_custom_webhook_payload(self, url: str, content: str) -> dict:
+    """
+    根据 URL 构建对应的 Webhook payload（适配title/text/desp新规范）
+    
+    自动识别常见服务并使用对应格式，默认遵循：
+    - title: 推送标题（必选）
+    - desp: 正文内容（支持Markdown，可选）
+    - tags: 标签列表（可选）
+    - short: 简短描述（可选）
+    """
+    url_lower = url.lower()
+    # 基础标题（用于title参数）
+    base_title = f"{datetime.now().strftime('%Y-%m-%d')} A股自选股分析报告"
+    
+    # 1. 钉钉机器人（保留原有适配）
+    if 'dingtalk' in url_lower or 'oapi.dingtalk.com' in url_lower:
         return {
-            "text": content,
-            "content": content,
-            "message": content,
-            "body": content
+            "msgtype": "markdown",
+            "markdown": {
+                "title": base_title,
+                "text": content
+            }
         }
+    
+    # 2. Discord Webhook（保留原有适配）
+    if 'discord.com/api/webhooks' in url_lower or 'discordapp.com/api/webhooks' in url_lower:
+        truncated = content[:1900] + "..." if len(content) > 1900 else content
+        return {"content": truncated}
+    
+    # 3. Slack Incoming Webhook（保留原有适配）
+    if 'hooks.slack.com' in url_lower:
+        return {"text": content, "mrkdwn": True}
+    
+    # 4. Bark (iOS 推送)（保留原有适配）
+    if 'api.day.app' in url_lower:
+        return {
+            "title": base_title,
+            "body": content[:4000],
+            "group": "stock"
+        }
+    
+    # 5. 通用格式（严格遵循新参数规范）
+    payload = {
+        # title必选（优先使用），如果服务要求text则自动兼容
+        "title": base_title,
+        # desp存Markdown正文（可选）
+        "desp": content,
+        # tags标签（可选）
+        "tags": self._custom_webhook_tags,
+        # short简短描述（可选）
+        "short": self._custom_webhook_short
+    }
+    
+    # 兼容只认text的服务：如果无title参数，用text替代
+    # 可根据实际需求添加更多兼容规则
+    if any(key in url_lower for key in ['text-only', 'simple-webhook']):
+        payload.pop("title")
+        payload["text"] = base_title  # text替代title
+    
+    return payload
+
     
     def send(self, content: str) -> bool:
         """
