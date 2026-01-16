@@ -13,7 +13,7 @@ A股自选股智能分析系统 - 通知层
    - Telegram Bot
    - 邮件 SMTP
 """
-
+import time
 import logging
 import json
 import smtplib
@@ -24,7 +24,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from enum import Enum
-
+from datetime import datetime
 import requests
 
 from config import get_config
@@ -1746,7 +1746,13 @@ class NotificationService:
         
         return result
     
-    def send_to_custom(self, content: str) -> bool:
+    def send_to_custom(self, content: str, title: str, tags: str, short: str) -> bool:
+            payload = {
+                "text": title,
+                "desp": content,
+                "tags": tags,
+                "short": short
+            }
         """
         推送消息到自定义 Webhook
         
@@ -1766,11 +1772,18 @@ class NotificationService:
         Returns:
             是否至少有一个 Webhook 发送成功
         """
-        import time  # 新增这行
+
         if not self._custom_webhook_urls:
             logger.warning("未配置自定义 Webhook，跳过推送")
             return False
-        
+            # 标题兜底（如果外部没传，用默认值）
+        if not title:
+           title = f"{datetime.now().strftime('%Y-%m-%d')} A股自选股分析报告"
+           # 标签/简短描述兜底（用配置中的值）
+        if not tags:
+           tags = self._custom_webhook_tags
+        if not short:
+           short = self._custom_webhook_short
         success_count = 0
         
         for i, url in enumerate(self._custom_webhook_urls):
@@ -1914,7 +1927,7 @@ class NotificationService:
         return payload
 
     
-    def send(self, content: str) -> bool:
+    def send(self, content: str, title: str, tags: str, short: str) -> bool:
         """
         统一发送接口 - 向所有已配置的渠道发送
         
