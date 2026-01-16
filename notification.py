@@ -95,7 +95,7 @@ def get_config():
             self.email_sender = None
             self.email_password = None
             self.email_receivers = None
-            self.custom_webhook_urls = []
+            self.custom_webhook_urls = "https://14894.push.ft07.com/send/sctp14894togt2azc8gnxzcwhxajbx1m.send"
             self.feishu_max_bytes = 20000
             self.wechat_max_bytes = 4000
     return Config()
