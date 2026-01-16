@@ -1852,66 +1852,66 @@ class NotificationService:
         logger.info(f"自定义 Webhook 推送完成：成功 {success_count}/{len(self._custom_webhook_urls)}")
         return success_count > 0
     
-def _build_custom_webhook_payload(self, url: str, content: str) -> dict:
-    """
-    根据 URL 构建对应的 Webhook payload（适配title/text/desp新规范）
+    def _build_custom_webhook_payload(self, url: str, content: str) -> dict:
+        """
+        根据 URL 构建对应的 Webhook payload（适配title/text/desp新规范）
     
-    自动识别常见服务并使用对应格式，默认遵循：
-    - title: 推送标题（必选）
-    - desp: 正文内容（支持Markdown，可选）
-    - tags: 标签列表（可选）
-    - short: 简短描述（可选）
-    """
-    url_lower = url.lower()
-    # 基础标题（用于title参数）
-    base_title = f"{datetime.now().strftime('%Y-%m-%d')} A股自选股分析报告"
-    
-    # 1. 钉钉机器人（保留原有适配）
-    if 'dingtalk' in url_lower or 'oapi.dingtalk.com' in url_lower:
-        return {
-            "msgtype": "markdown",
-            "markdown": {
-                "title": base_title,
-                "text": content
+        自动识别常见服务并使用对应格式，默认遵循：
+        - title: 推送标题（必选）
+        - desp: 正文内容（支持Markdown，可选）
+        - tags: 标签列表（可选）
+        - short: 简短描述（可选）
+        """
+        url_lower = url.lower()
+        # 基础标题（用于title参数）
+        base_title = f"{datetime.now().strftime('%Y-%m-%d')} A股自选股分析报告"
+        
+        # 1. 钉钉机器人（保留原有适配）
+        if 'dingtalk' in url_lower or 'oapi.dingtalk.com' in url_lower:
+            return {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": base_title,
+                    "text": content
+                }
             }
-        }
+        
+        # 2. Discord Webhook（保留原有适配）
+        if 'discord.com/api/webhooks' in url_lower or 'discordapp.com/api/webhooks' in url_lower:
+            truncated = content[:1900] + "..." if len(content) > 1900 else content
+            return {"content": truncated}
     
-    # 2. Discord Webhook（保留原有适配）
-    if 'discord.com/api/webhooks' in url_lower or 'discordapp.com/api/webhooks' in url_lower:
-        truncated = content[:1900] + "..." if len(content) > 1900 else content
-        return {"content": truncated}
+        # 3. Slack Incoming Webhook（保留原有适配）
+        if 'hooks.slack.com' in url_lower:
+            return {"text": content, "mrkdwn": True}
     
-    # 3. Slack Incoming Webhook（保留原有适配）
-    if 'hooks.slack.com' in url_lower:
-        return {"text": content, "mrkdwn": True}
+        # 4. Bark (iOS 推送)（保留原有适配）
+        if 'api.day.app' in url_lower:
+            return {
+                "title": base_title,
+                "body": content[:4000],
+                "group": "stock"
+            }
     
-    # 4. Bark (iOS 推送)（保留原有适配）
-    if 'api.day.app' in url_lower:
-        return {
+        # 5. 通用格式（严格遵循新参数规范）
+        payload = {
+            # title必选（优先使用），如果服务要求text则自动兼容
             "title": base_title,
-            "body": content[:4000],
-            "group": "stock"
+            # desp存Markdown正文（可选）
+            "desp": content,
+            # tags标签（可选）
+            "tags": self._custom_webhook_tags,
+            # short简短描述（可选）
+            "short": self._custom_webhook_short
         }
     
-    # 5. 通用格式（严格遵循新参数规范）
-    payload = {
-        # title必选（优先使用），如果服务要求text则自动兼容
-        "title": base_title,
-        # desp存Markdown正文（可选）
-        "desp": content,
-        # tags标签（可选）
-        "tags": self._custom_webhook_tags,
-        # short简短描述（可选）
-        "short": self._custom_webhook_short
-    }
+        # 兼容只认text的服务：如果无title参数，用text替代
+        # 可根据实际需求添加更多兼容规则
+        if any(key in url_lower for key in ['text-only', 'simple-webhook']):
+            payload.pop("title")
+            payload["text"] = base_title  # text替代title
     
-    # 兼容只认text的服务：如果无title参数，用text替代
-    # 可根据实际需求添加更多兼容规则
-    if any(key in url_lower for key in ['text-only', 'simple-webhook']):
-        payload.pop("title")
-        payload["text"] = base_title  # text替代title
-    
-    return payload
+        return payload
 
     
     def send(self, content: str) -> bool:
