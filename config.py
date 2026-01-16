@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import List, Optional
 from dotenv import load_dotenv, dotenv_values
 from dataclasses import dataclass, field
-
+custom_webhook_urls = ["https://<uid>.push.ft07.com/send/<sendkey>.send"]  # 你的 Webhook 地址
+custom_webhook_method = "POST"  # 可选 GET/POST
+custom_webhook_content_type = "application/json"  # 可选 application/json、application/x-www-form-urlencoded、multipart/form-data
+custom_webhook_tags = "A股|分析报告|每日更新"  # 多标签竖线分隔
+custom_webhook_short = "今日A股自选股操作建议，含买入/卖出信号"  # 简短描述
+custom_webhook_text = ""  # 可选，用于替代 title 参数
 
 @dataclass
 class Config:
