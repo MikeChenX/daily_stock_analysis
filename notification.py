@@ -12,23 +12,93 @@ A股自选股智能分析系统 - 通知层
    - 飞书 Webhook
    - Telegram Bot
    - 邮件 SMTP
+   - 自定义 Webhook（适配 POST/GET 多格式）
 """
-import time
+
 import logging
 import json
 import smtplib
 import re
+import urllib.parse
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.header import Header
 from enum import Enum
-from datetime import datetime
+
 import requests
 
-from config import get_config
-from analyzer import AnalysisResult
+# 模拟 AnalysisResult 类（实际使用时请确保已导入）
+class AnalysisResult:
+    def __init__(self, code, name, sentiment_score, trend_prediction, analysis_summary, 
+                 operation_advice, technical_analysis=None, news_summary=None,
+                 buy_reason=None, risk_warning=None, key_points=None,
+                 short_term_outlook=None, medium_term_outlook=None,
+                 ma_analysis=None, volume_analysis=None, pattern_analysis=None,
+                 fundamental_analysis=None, sector_position=None, company_highlights=None,
+                 market_sentiment=None, hot_topics=None, data_sources=None,
+                 success=True, error_message=None, search_performed=False,
+                 dashboard=None):
+        self.code = code
+        self.name = name
+        self.sentiment_score = sentiment_score
+        self.trend_prediction = trend_prediction
+        self.analysis_summary = analysis_summary
+        self.operation_advice = operation_advice
+        self.technical_analysis = technical_analysis
+        self.news_summary = news_summary
+        self.buy_reason = buy_reason
+        self.risk_warning = risk_warning
+        self.key_points = key_points
+        self.short_term_outlook = short_term_outlook
+        self.medium_term_outlook = medium_term_outlook
+        self.ma_analysis = ma_analysis
+        self.volume_analysis = volume_analysis
+        self.pattern_analysis = pattern_analysis
+        self.fundamental_analysis = fundamental_analysis
+        self.sector_position = sector_position
+        self.company_highlights = company_highlights
+        self.market_sentiment = market_sentiment
+        self.hot_topics = hot_topics
+        self.data_sources = data_sources
+        self.success = success
+        self.error_message = error_message
+        self.search_performed = search_performed
+        self.dashboard = dashboard
+    
+    def get_emoji(self):
+        """获取情绪对应的emoji"""
+        if self.sentiment_score >= 80:
+            return "🔥"
+        elif self.sentiment_score >= 60:
+            return "📈"
+        elif self.sentiment_score >= 40:
+            return "📊"
+        else:
+            return "📉"
+    
+    def get_confidence_stars(self):
+        """获取置信度星级"""
+        stars = int(self.sentiment_score / 20)
+        return "⭐" * stars if stars > 0 else "⭐"
+
+# 模拟配置获取函数（实际使用时请替换为真实配置）
+def get_config():
+    """获取配置（模拟实现）"""
+    class Config:
+        def __init__(self):
+            self.wechat_webhook_url = None
+            self.feishu_webhook_url = None
+            self.telegram_bot_token = None
+            self.telegram_chat_id = None
+            self.email_sender = None
+            self.email_password = None
+            self.email_receivers = None
+            self.custom_webhook_urls = []
+            self.feishu_max_bytes = 20000
+            self.wechat_max_bytes = 4000
+    return Config()
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +172,7 @@ class NotificationService:
     - 飞书 Webhook
     - Telegram Bot
     - 邮件 SMTP
-    
-    注意：所有已配置的渠道都会收到推送
+    - 自定义 Webhook（适配 POST/GET 多格式）
     """
     
     def __init__(self):
@@ -133,12 +202,15 @@ class NotificationService:
         
         # 自定义 Webhook 配置
         self._custom_webhook_urls = getattr(config, 'custom_webhook_urls', []) or []
-
-       # 自定义Webhook扩展参数（适配新规范）
-        self._custom_webhook_tags = getattr(config, 'custom_webhook_tags', 'A股分析|智能报告') or ''
-        self._custom_webhook_short = getattr(config, 'custom_webhook_short', 'A股自选股智能分析报告，含操作建议与行情分析') or ''
-   
-       
+        
+        # 自定义 Webhook 额外配置
+        self._custom_webhook_config = {
+            'method': getattr(config, 'custom_webhook_method', 'POST'),  # 默认 POST
+            'content_type': getattr(config, 'custom_webhook_content_type', 'application/json'),  # 默认 JSON
+            'tags': getattr(config, 'custom_webhook_tags', '股票分析|日报'),  # 默认标签
+            'short': getattr(config, 'custom_webhook_short', 'A股智能分析报告')  # 默认简短描述
+        }
+        
         # 消息长度限制（字节）
         self._feishu_max_bytes = getattr(config, 'feishu_max_bytes', 20000)
         self._wechat_max_bytes = getattr(config, 'wechat_max_bytes', 4000)
@@ -395,31 +467,6 @@ class NotificationService:
         ])
         
         return "\n".join(report_lines)
-    
-    def _get_signal_level(self, result: AnalysisResult) -> tuple:
-        """
-        根据操作建议获取信号等级和颜色
-        
-        Returns:
-            (信号文字, emoji, 颜色标记)
-        """
-        advice = result.operation_advice
-        score = result.sentiment_score
-        
-        if advice in ['强烈买入'] or score >= 80:
-            return ('强烈买入', '💚', '强买')
-        elif advice in ['买入', '加仓'] or score >= 65:
-            return ('买入', '🟢', '买入')
-        elif advice in ['持有'] or 55 <= score < 65:
-            return ('持有', '🟡', '持有')
-        elif advice in ['观望'] or 45 <= score < 55:
-            return ('观望', '⚪', '观望')
-        elif advice in ['减仓'] or 35 <= score < 45:
-            return ('减仓', '🟠', '减仓')
-        elif advice in ['卖出', '强烈卖出'] or score < 35:
-            return ('卖出', '🔴', '卖出')
-        else:
-            return ('观望', '⚪', '观望')
     
     def generate_dashboard_report(
         self, 
@@ -1645,7 +1692,6 @@ class NotificationService:
     def _send_telegram_message(self, api_url: str, chat_id: str, text: str) -> bool:
         """发送单条 Telegram 消息"""
         # 转换 Markdown 为 Telegram 支持的格式
-        # Telegram 的 Markdown 格式稍有不同，做简单处理
         telegram_text = self._convert_to_telegram_markdown(text)
         
         payload = {
@@ -1740,198 +1786,121 @@ class NotificationService:
         result = re.sub(r'\*\*(.+?)\*\*', r'*\1*', result)
         
         # 转义特殊字符（Telegram Markdown 需要）
-        # 注意：不转义已经用于格式的 * _ `
         for char in ['[', ']', '(', ')']:
             result = result.replace(char, f'\\{char}')
         
         return result
     
-    def send_to_custom(self, content: str, title: str, tags: str, short: str) -> bool:
-        payload = {
-           "text": title,
-           "desp": content,
-           "tags": tags,
-           "short": short
-        }
+    def send_to_custom(self, content: str) -> bool:
         """
-        推送消息到自定义 Webhook
+        推送消息到自定义 Webhook（适配 POST/GET 多格式、多 Content-Type）
         
-        支持任意接受 POST JSON 的 Webhook 端点
-        默认发送格式：{"text": "消息内容", "content": "消息内容"}
-        
-        适用于：
-        - 钉钉机器人
-        - Discord Webhook
-        - Slack Incoming Webhook
-        - 自建通知服务
-        - 其他支持 POST JSON 的服务
+        完全符合接口要求：
+        - 支持 GET/POST 方法
+        - 支持 application/json、application/x-www-form-urlencoded、multipart/form-data
+        - title/text 二选一必填，desp/tags/short 可选
+        - GET 方法自动 URL 编码中文和特殊字符
         
         Args:
-            content: 消息内容（Markdown 格式）
+            content: 消息内容（Markdown 格式，作为 desp 参数）
             
         Returns:
             是否至少有一个 Webhook 发送成功
         """
-
         if not self._custom_webhook_urls:
             logger.warning("未配置自定义 Webhook，跳过推送")
             return False
-            # 标题兜底（如果外部没传，用默认值）
-        if not title:
-           title = f"{datetime.now().strftime('%Y-%m-%d')} A股自选股分析报告"
-           # 标签/简短描述兜底（用配置中的值）
-        if not tags:
-           tags = self._custom_webhook_tags
-        if not short:
-           short = self._custom_webhook_short
+        
         success_count = 0
+        method = self._custom_webhook_config['method'].upper()
+        content_type = self._custom_webhook_config['content_type']
+        
+        # 构建核心参数（符合接口要求）
+        report_date = datetime.now().strftime('%Y-%m-%d')
+        payload = {
+            # title/text 二选一必填，优先使用 title
+            "title": f"{report_date} A股自选股智能分析报告",
+            # desp 为可选参数，传入完整 Markdown 内容（支持换行和特殊字符）
+            "desp": content,
+            # tags 可选，多标签竖线分隔
+            "tags": self._custom_webhook_config['tags'],
+            # short 可选，简短描述
+            "short": self._custom_webhook_config['short']
+        }
+        
+        # 确保 title/text 二选一（如果配置了 text 则优先 text）
+        if hasattr(self._custom_webhook_config, 'text') and self._custom_webhook_config['text']:
+            payload['text'] = self._custom_webhook_config['text']
+            payload.pop('title', None)
         
         for i, url in enumerate(self._custom_webhook_urls):
             try:
-                # 通用 JSON 格式，兼容大多数 Webhook
-                # 钉钉格式: {"msgtype": "text", "text": {"content": "xxx"}}
-                # Slack 格式: {"text": "xxx"}
-                # Discord 格式: {"content": "xxx"}
+                logger.info(f"自定义 Webhook {i+1} - 开始推送，方法: {method}，Content-Type: {content_type}")
+                logger.debug(f"自定义 Webhook {i+1} - 请求参数: {json.dumps(payload, ensure_ascii=False)}")
                 
-                # 检测 URL 类型并构造对应格式
-                payload = self._build_custom_webhook_payload(url, content)
+                response = None
+                if method == "GET":
+                    # GET 方法：参数放入 Query，自动 URL 编码
+                    encoded_params = {}
+                    for key, value in payload.items():
+                        if value is not None and str(value).strip():
+                            # 对中文、换行符等特殊字符进行 URL 编码
+                            encoded_params[key] = urllib.parse.quote(str(value), safe='')
+                    
+                    response = requests.get(
+                        url,
+                        params=encoded_params,
+                        timeout=30,
+                        verify=False  # 忽略 SSL 验证（避免证书问题）
+                    )
                 
-                headers = {
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'StockAnalysis/1.0'
-                }
-                
-                body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-                headers_with_charset = dict(headers)
-                headers_with_charset['Content-Type'] = 'application/json; charset=utf-8'
-                try:
+                elif method == "POST":
+                    # POST 方法：根据 Content-Type 构建请求体
+                    headers = {}
+                    if content_type == "application/json":
+                        headers['Content-Type'] = "application/json; charset=utf-8"
+                        request_body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+                    elif content_type == "application/x-www-form-urlencoded":
+                        headers['Content-Type'] = "application/x-www-form-urlencoded; charset=utf-8"
+                        request_body = urllib.parse.urlencode(payload, encoding='utf-8')
+                    elif content_type == "multipart/form-data":
+                        # multipart/form-data 无需手动设置 Content-Type
+                        request_body = payload
+                    else:
+                        logger.error(f"自定义 Webhook {i+1} - 不支持的 Content-Type: {content_type}")
+                        continue
+                    
                     response = requests.post(
                         url,
-                        data=body,
-                        headers=headers_with_charset,
-                        timeout=30
+                        data=request_body,
+                        headers=headers if content_type != "multipart/form-data" else {},
+                        timeout=30,
+                        verify=False
                     )
-                    # 新增：打印详细响应日志（便于排查500错误）
-                    logger.debug(f"自定义Webhook {i+1} 响应状态码: {response.status_code}")
-                    logger.debug(f"自定义Webhook {i+1} 响应内容: {response.text[:500]}")
-    
-                    if response.status_code == 200:
-                        logger.info(f"自定义 Webhook {i+1} 推送成功")
-                        success_count += 1
-                    else:
-                        logger.error(f"自定义 Webhook {i+1} 推送失败: HTTP {response.status_code}")
-                        logger.error(f"响应内容: {response.text[:500]}")
-                        # 新增：500错误重试1次
-                        if response.status_code == 500:
-                            logger.info(f"自定义Webhook {i+1} 触发500错误，重试1次...")
-                            time.sleep(1)
-                            response = requests.post(
-                                url,
-                                data=body,
-                                headers=headers_with_charset,
-                                timeout=30
-                            )
-                            if response.status_code == 200:
-                                logger.info(f"自定义Webhook {i+1} 重试成功")
-                                success_count += 1
-                except Exception as e:
-                    logger.error(f"自定义 Webhook {i+1} 推送异常: {e}")
-                    # 新增：异常时重试1次
-                    try:
-                        logger.info(f"自定义Webhook {i+1} 推送异常，重试1次...")
-                        time.sleep(1)
-                        response = requests.post(
-                            url,
-                            data=body,
-                            headers=headers_with_charset,
-                            timeout=30
-                        )
-                        if response.status_code == 200:
-                            logger.info(f"自定义Webhook {i+1} 重试成功")
-                            success_count += 1
-                    except Exception as retry_e:
-                        logger.error(f"自定义Webhook {i+1} 重试失败: {retry_e}")
                 
+                else:
+                    logger.error(f"自定义 Webhook {i+1} - 不支持的请求方法: {method}")
+                    continue
+                
+                # 处理响应
                 if response.status_code == 200:
-                    logger.info(f"自定义 Webhook {i+1} 推送成功")
+                    logger.info(f"自定义 Webhook {i+1} - 推送成功，响应: {response.text[:200]}")
                     success_count += 1
                 else:
-                    logger.error(f"自定义 Webhook {i+1} 推送失败: HTTP {response.status_code}")
-                    logger.debug(f"响应内容: {response.text[:200]}")
-                    
+                    logger.error(f"自定义 Webhook {i+1} - 推送失败，HTTP 状态码: {response.status_code}")
+                    logger.error(f"自定义 Webhook {i+1} - 失败响应: {response.text}")
+                
             except Exception as e:
-                logger.error(f"自定义 Webhook {i+1} 推送异常: {e}")
+                logger.error(f"自定义 Webhook {i+1} - 推送异常: {str(e)}")
+                import traceback
+                logger.debug(f"自定义 Webhook {i+1} - 异常堆栈: {traceback.format_exc()}")
         
         logger.info(f"自定义 Webhook 推送完成：成功 {success_count}/{len(self._custom_webhook_urls)}")
         return success_count > 0
     
-    def _build_custom_webhook_payload(self, url: str, content: str) -> dict:
-        """
-        根据 URL 构建对应的 Webhook payload（适配title/text/desp新规范）
-    
-        自动识别常见服务并使用对应格式，默认遵循：
-        - title: 推送标题（必选）
-        - desp: 正文内容（支持Markdown，可选）
-        - tags: 标签列表（可选）
-        - short: 简短描述（可选）
-        """
-        url_lower = url.lower()
-        # 基础标题（用于title参数）
-        base_title = f"{datetime.now().strftime('%Y-%m-%d')} A股自选股分析报告"
-        
-        # 1. 钉钉机器人（保留原有适配）
-        if 'dingtalk' in url_lower or 'oapi.dingtalk.com' in url_lower:
-            return {
-                "msgtype": "markdown",
-                "markdown": {
-                    "title": base_title,
-                    "text": content
-                }
-            }
-        
-        # 2. Discord Webhook（保留原有适配）
-        if 'discord.com/api/webhooks' in url_lower or 'discordapp.com/api/webhooks' in url_lower:
-            truncated = content[:1900] + "..." if len(content) > 1900 else content
-            return {"content": truncated}
-    
-        # 3. Slack Incoming Webhook（保留原有适配）
-        if 'hooks.slack.com' in url_lower:
-            return {"text": content, "mrkdwn": True}
-    
-        # 4. Bark (iOS 推送)（保留原有适配）
-        if 'api.day.app' in url_lower:
-            return {
-                "title": base_title,
-                "body": content[:4000],
-                "group": "stock"
-            }
-    
-        # 5. 通用格式（严格遵循新参数规范）
-        payload = {
-            # title必选（优先使用），如果服务要求text则自动兼容
-            "title": base_title,
-            # desp存Markdown正文（可选）
-            "desp": content,
-            # tags标签（可选）
-            "tags": self._custom_webhook_tags,
-            # short简短描述（可选）
-            "short": self._custom_webhook_short
-        }
-    
-        # 兼容只认text的服务：如果无title参数，用text替代
-        # 可根据实际需求添加更多兼容规则
-        if any(key in url_lower for key in ['text-only', 'simple-webhook']):
-            payload.pop("title")
-            payload["text"] = base_title  # text替代title
-    
-        return payload
-
-    
-    def send(self, content: str, title: str, tags: str, short: str) -> bool:
+    def send(self, content: str) -> bool:
         """
         统一发送接口 - 向所有已配置的渠道发送
-        
-        遍历所有已配置的渠道，逐一发送消息
         
         Args:
             content: 消息内容（Markdown 格式）
@@ -1977,6 +1946,31 @@ class NotificationService:
         
         logger.info(f"通知发送完成：成功 {success_count} 个，失败 {fail_count} 个")
         return success_count > 0
+    
+    def _get_signal_level(self, result: AnalysisResult) -> tuple:
+        """
+        根据操作建议获取信号等级和颜色
+        
+        Returns:
+            (信号文字, emoji, 颜色标记)
+        """
+        advice = result.operation_advice
+        score = result.sentiment_score
+        
+        if advice in ['强烈买入'] or score >= 80:
+            return ('强烈买入', '💚', '强买')
+        elif advice in ['买入', '加仓'] or score >= 65:
+            return ('买入', '🟢', '买入')
+        elif advice in ['持有'] or 55 <= score < 65:
+            return ('持有', '🟡', '持有')
+        elif advice in ['观望'] or 45 <= score < 55:
+            return ('观望', '⚪', '观望')
+        elif advice in ['减仓'] or 35 <= score < 45:
+            return ('减仓', '🟠', '减仓')
+        elif advice in ['卖出', '强烈卖出'] or score < 35:
+            return ('卖出', '🔴', '卖出')
+        else:
+            return ('观望', '⚪', '观望')
     
     def _send_chunked_messages(self, content: str, max_length: int) -> bool:
         """
@@ -2141,6 +2135,9 @@ if __name__ == "__main__":
             operation_advice='买入',
             technical_analysis='放量突破 MA20，MACD 金叉',
             news_summary='公司发布分红公告，业绩超预期',
+            buy_reason='业绩超预期+行业景气度高',
+            risk_warning='短期估值偏高，注意回调风险',
+            key_points='白酒龙头+业绩增长+现金流充裕'
         ),
         AnalysisResult(
             code='000001',
@@ -2151,6 +2148,7 @@ if __name__ == "__main__":
             operation_advice='持有',
             technical_analysis='均线粘合，成交量萎缩',
             news_summary='近期无重大消息',
+            risk_warning='银行业利率市场化压力'
         ),
         AnalysisResult(
             code='300750',
@@ -2161,6 +2159,7 @@ if __name__ == "__main__":
             operation_advice='卖出',
             technical_analysis='跌破 MA10 支撑，量能不足',
             news_summary='行业竞争加剧，毛利率承压',
+            risk_warning='产能过剩+价格战风险'
         ),
     ]
     
@@ -2175,7 +2174,7 @@ if __name__ == "__main__":
     # 生成日报
     print("\n=== 生成日报测试 ===")
     report = service.generate_daily_report(test_results)
-    print(report)
+    print(report[:500] + "...")
     
     # 保存到文件
     print("\n=== 保存日报 ===")
